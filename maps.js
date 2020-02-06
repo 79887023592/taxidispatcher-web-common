@@ -1,4 +1,5 @@
-var db = require('./db');
+var db = require('./db'),
+		request = require('request');
 
 function isPointInsidePolygon (coordsList, xd, yd) {
 	var i1, i2, n, pcount, //int
@@ -120,5 +121,94 @@ function getSectorsCoordinates(sectorsList, bbox, connection, onSuccess) {
 		connection);
 }
 
+function parseCoordinatesFromGeocodeData(data, options) {
+		var result = data && data.result, address = result && result.priority &&
+			result.priority === 'address' && result.address && result.address.length &&
+			result.address.filter(function(addr) { return addr.type === 'FeatureCollection'; }),
+			featureCollection, idx, pointCoordinates,
+			parseResult = {
+				pointLat: false,
+				pointLon: false,
+				withoutStreetPointLat: false,
+				withoutStreetPointLon: false,
+				emptyAddress: false
+			};
+
+			parseResult.emptyAddress = !(address && address.length);
+
+			for (idx = 0; idx < address.length; idx++) {
+				featureCollection = address[idx];
+
+				pointCoordinates = getAddrPointsByFeatureCollection(featureCollection, options, true);
+				if (pointCoordinates !== false && pointCoordinates && pointCoordinates.length && parseResult.pointLat === false && parseResult.pointLon === false) {
+					parseResult.pointLat = pointCoordinates && pointCoordinates.length && pointCoordinates[1];
+					parseResult.pointLon = pointCoordinates && pointCoordinates.length && pointCoordinates[0];
+				}
+
+				pointCoordinates = getAddrPointsByFeatureCollection(featureCollection, options, false);
+				if (pointCoordinates !== false && pointCoordinates && pointCoordinates.length && parseResult.withoutStreetPointLat === false && parseResult.withoutStreetPointLon === false) {
+					parseResult.withoutStreetPointLat = pointCoordinates && pointCoordinates.length && pointCoordinates[1];
+					parseResult.withoutStreetPointLon = pointCoordinates && pointCoordinates.length && pointCoordinates[0];
+				}
+			}
+
+			return parseResult;
+	}
+
+	function getAddrPointsByFeatureCollection(featureCollection, options, withStreets) {
+			var featuresList = featureCollection && featureCollection.features && featureCollection.features.length && featureCollection.features.filter(function(feat) {
+				return feat.type === 'Feature' && (!withStreets || hasStreetAddrComponent(feat)); }),
+				feature, featureGeometries, i, result = false, points;
+
+			if (!(featuresList && featuresList.length)) {
+				return result;
+			}
+
+			for (i = 0; i < featuresList.length; i++) {
+				feature = featuresList[i];
+				featureGeometries = feature && feature.geometry && feature.geometry.type && feature.geometry.type === 'GeometryCollection' && feature.geometry.geometries;
+
+				points = getAddrPointsByFeatureGeometries(featureGeometries, options);
+				if (points !== false) {
+					return points;
+				}
+			}
+
+			return result;
+		}
+
+		function hasStreetAddrComponent(feature) {
+				var properties = feature && feature.properties,
+					addressComponents = properties && properties.address_components,
+					withStreetAddresses = addressComponents && addressComponents.length &&
+						addressComponents.filter(function(addrComponent) {
+							return addrComponent.type === 'street';
+						});
+				return withStreetAddresses && withStreetAddresses.length;
+			}
+
+			function getAddrPointsByFeatureGeometries(featureGeometries, options) {
+					var pointGeometryList = featureGeometries && featureGeometries.length && 			featureGeometries.filter(function(geom) { return geom.type === 'Point'; }), geoPoint, pointCoordinates, pointLat, pointLon, result = false, i;
+
+					if (!(pointGeometryList && pointGeometryList.length)) {
+						return result;
+					}
+
+					for (i = 0; i < pointGeometryList.length; i++) {
+						geoPoint = pointGeometryList[i],
+						pointCoordinates = geoPoint && geoPoint.coordinates;
+						pointLat = pointCoordinates && pointCoordinates.length && pointCoordinates[1];
+						pointLon = pointCoordinates && pointCoordinates.length && pointCoordinates[0];
+
+						if (pointLat >= options.minLat && pointLat <= options.maxLat &&
+							pointLon >= options.minLon && pointLon <= options.maxLon) {
+							return [pointLon, pointLat];
+						}
+					}
+
+					return result;
+				}
+
 module.exports.isPointInsidePolygon = isPointInsidePolygon;
 module.exports.getSectorsCoordinates = getSectorsCoordinates;
+module.exports.parseCoordinatesFromGeocodeData = parseCoordinatesFromGeocodeData;
